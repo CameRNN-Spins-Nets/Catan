@@ -1,11 +1,11 @@
 import tkinter as tk
 import math
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
+import random
 
 img_path = './static/images/'
 
-img1_label = 'img1.jpg'
-img2_label = 'img2.png'
+images = ['forest.jpg', 'bricks.jpg', 'field.jpg', 'quarry.jpg', 'sheep.jpg']
 
 class HexViewer3D:
     def __init__(self, root):
@@ -28,14 +28,12 @@ class HexViewer3D:
         
         # Load images
         try:
-            self.img1 = Image.open(img_path + img1_label).convert('RGBA')
-            self.img2 = Image.open(img_path + img2_label).convert('RGBA')
+            self.images = [Image.open(img_path + img_label).convert('RGBA') for img_label in images]
             print("Images loaded successfully")
         except Exception as e:
             print(f"Error loading images: {e}")
             # Create placeholder images if files don't exist
-            self.img1 = Image.new('RGB', (100, 100), color='red')
-            self.img2 = Image.new('RGB', (100, 100), color='blue')
+            self.images = [Image.new('RGBA', (100, 100), color=color) for color in ['red', 'yellow', 'blue', 'green', 'black', 'white']]
         
         # Create hexagonal structure
         self.vertices = []
@@ -51,31 +49,36 @@ class HexViewer3D:
         # Honeycomb spacing: horizontal = 1.5 * radius, vertical = sqrt(3) * radius
         radius = 0.8
         density = 0.9
-        h_spacing = density * radius
-        v_spacing = math.sqrt(3) * density * radius
+        x_spacing = density * radius
+        y_spacing = math.sqrt(3) * density * radius
         
         positions = [
             # Center
             (0, 0, 0),
             # Ring 1 (6 hexagons around center)
-            (2 * h_spacing, 0, 0),
-            (h_spacing, v_spacing, 0),
-            (-h_spacing, v_spacing, 0),
-            (-2 * h_spacing, 0, 0),
-            (-h_spacing, -v_spacing, 0),
-            (h_spacing, -v_spacing, 0),
+            (2 * x_spacing, 0, 0),
+            (x_spacing, y_spacing, 0),
+            (-x_spacing, y_spacing, 0),
+            (-2 * x_spacing, 0, 0),
+            (-x_spacing, -y_spacing, 0),
+            (x_spacing, -y_spacing, 0),
             # Ring 2 (partial - add a few more for visual interest)
-            (4 * h_spacing, 0, 0),
-            (3 * h_spacing, v_spacing, 0),
-            (0, 2 * v_spacing, 0),
-            (-3 * h_spacing, v_spacing, 0),
-            (-4 * h_spacing, 0, 0),
-            (0, -2 * v_spacing, 0),
+            (4 * x_spacing, 0, 0),
+            (3 * x_spacing, y_spacing, 0),
+            (3 * x_spacing, -y_spacing, 0),
+            (0, 2 * y_spacing, 0),
+            (2 * x_spacing, 2 * y_spacing, 0),
+            (2 * x_spacing, -2 * y_spacing, 0),
+            (-3 * x_spacing, y_spacing, 0),
+            (-3 * x_spacing, -y_spacing, 0),
+            (-4 * x_spacing, 0, 0),
+            (0, -2 * y_spacing, 0),
+            (-2 * x_spacing, -2 * y_spacing, 0),
+            (-2 * x_spacing, 2 * y_spacing, 0)
         ]
         
         for idx, (px, py, pz) in enumerate(positions):
-            # Alternate between img1 and img2
-            texture = 1 if idx % 2 == 0 else 2
+            texture = random.choice([i for i, _ in enumerate(self.images)]) + 1
             self.add_hexagonal_prism(px, py, pz, radius, 2, texture)
     
     def add_hexagonal_prism(self, cx, cy, cz, radius, height, texture):
@@ -130,6 +133,47 @@ class HexViewer3D:
         
         return screen_x, screen_y, z_final
     
+    def create_textured_hexagon(self, face_coords, img):
+        """Create a properly textured and clipped hexagon image"""
+        # Get bounding box
+        xs = [c[0] for c in face_coords]
+        ys = [c[1] for c in face_coords]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        width = int(max_x - min_x) + 1
+        height = int(max_y - min_y) + 1
+        
+        if width < 5 or height < 5:
+            return None, None, None
+        
+        # Create a new image for this hexagon
+        size = max(width, height)
+        hex_img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        
+        # Resize source image to fit
+        resized_img = img.resize((size, size), Image.Resampling.LANCZOS)
+        
+        # Create hexagon mask
+        mask = Image.new('L', (size, size), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        
+        # Translate coordinates to local space
+        offset_x = (size - width) / 2
+        offset_y = (size - height) / 2
+        local_coords = [(x - min_x + offset_x, y - min_y + offset_y) for x, y in face_coords]
+        
+        # Draw filled hexagon on mask
+        mask_draw.polygon(local_coords, fill=255)
+        
+        # Apply mask to resized image
+        hex_img.paste(resized_img, (0, 0), mask)
+        
+        # Calculate position to center the image
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        
+        return hex_img, center_x, center_y
+    
     def render(self):
         """Render the 3D scene"""
         self.canvas.delete('all')
@@ -160,34 +204,23 @@ class HexViewer3D:
                 face_coords.append((x, y))
             
             # Draw textured face or colored face
-            if texture == 1 or texture == 2:
+            if texture > 0:
                 # Use the appropriate image
-                img = self.img1 if texture == 1 else self.img2
+                img = self.images[texture-1]
                 
-                # Calculate bounding box and center
-                xs = [c[0] for c in face_coords]
-                ys = [c[1] for c in face_coords]
-                min_x, max_x = min(xs), max(xs)
-                min_y, max_y = min(ys), max(ys)
-                center_x = (min_x + max_x) / 2
-                center_y = (min_y + max_y) / 2
-                width = int(max_x - min_x)
-                height = int(max_y - min_y)
+                # Create textured hexagon
+                hex_img, center_x, center_y = self.create_textured_hexagon(face_coords, img)
                 
-                if width > 5 and height > 5:
-                    # Resize image to fit the face
-                    size = max(width, height)
-                    resized = img.resize((size, size), Image.Resampling.LANCZOS)
-                    photo = ImageTk.PhotoImage(resized)
-                    
-                    # Draw image centered on the hexagon
+                if hex_img:
+                    # Convert to PhotoImage and draw
+                    photo = ImageTk.PhotoImage(hex_img)
                     self.canvas.create_image(center_x, center_y, image=photo)
                     
                     # Keep reference to prevent garbage collection
                     self.canvas.image_refs.append(photo)
                     
                     # Draw outline on top
-                    self.canvas.create_polygon(points, fill='', outline='#00ffff', width=2)
+                    self.canvas.create_polygon(points, fill='', outline='#00ffff', width=1)
                 else:
                     # Too small to texture, just draw outline
                     self.canvas.create_polygon(points, fill='gray', outline='#00ffff', width=1)
