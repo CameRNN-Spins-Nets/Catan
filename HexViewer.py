@@ -1,5 +1,11 @@
 import tkinter as tk
 import math
+from PIL import Image, ImageTk
+
+img_path = './static/images/'
+
+img1_label = 'img1.jpg'
+img2_label = 'img2.png'
 
 class HexViewer3D:
     def __init__(self, root):
@@ -20,9 +26,21 @@ class HexViewer3D:
         self.canvas.bind('<Button-1>', self.on_mouse_down)
         self.canvas.bind('<B1-Motion>', self.on_mouse_drag)
         
+        # Load images
+        try:
+            self.img1 = Image.open(img_path + img1_label).convert('RGBA')
+            self.img2 = Image.open(img_path + img2_label).convert('RGBA')
+            print("Images loaded successfully")
+        except Exception as e:
+            print(f"Error loading images: {e}")
+            # Create placeholder images if files don't exist
+            self.img1 = Image.new('RGB', (100, 100), color='red')
+            self.img2 = Image.new('RGB', (100, 100), color='blue')
+        
         # Create hexagonal structure
         self.vertices = []
         self.faces = []
+        self.face_textures = []  # Track which texture each face should use
         self.create_hex_structure()
         
         self.render()
@@ -55,10 +73,12 @@ class HexViewer3D:
             (0, -2 * v_spacing, 0),
         ]
         
-        for px, py, pz in positions:
-            self.add_hexagonal_prism(px, py, pz, radius, 2)
+        for idx, (px, py, pz) in enumerate(positions):
+            # Alternate between img1 and img2
+            texture = 1 if idx % 2 == 0 else 2
+            self.add_hexagonal_prism(px, py, pz, radius, 2, texture)
     
-    def add_hexagonal_prism(self, cx, cy, cz, radius, height):
+    def add_hexagonal_prism(self, cx, cy, cz, radius, height, texture):
         """Add a hexagonal prism to the structure"""
         base_idx = len(self.vertices)
         
@@ -73,11 +93,13 @@ class HexViewer3D:
                 self.vertices.append([x, y, z])
         
         # Create faces
-        # Top face
+        # Top face (this is the visible surface of the honeycomb)
         self.faces.append([base_idx + i for i in range(6)])
+        self.face_textures.append(texture)
         
         # Bottom face
         self.faces.append([base_idx + 6 + i for i in range(6)])
+        self.face_textures.append(0)  # No texture for bottom
         
         # Side faces
         for i in range(6):
@@ -89,6 +111,7 @@ class HexViewer3D:
                 base_idx + 6 + i
             ]
             self.faces.append(face)
+            self.face_textures.append(0)  # No texture for sides
     
     def project_3d_to_2d(self, x, y, z):
         """Project 3D coordinates to 2D screen space"""
@@ -110,6 +133,8 @@ class HexViewer3D:
     def render(self):
         """Render the 3D scene"""
         self.canvas.delete('all')
+        # Clear old image references
+        self.canvas.image_refs = []
         
         # Project all vertices
         projected = []
@@ -119,24 +144,60 @@ class HexViewer3D:
         
         # Sort faces by average depth (painter's algorithm)
         face_depths = []
-        for face in self.faces:
+        for idx, face in enumerate(self.faces):
             avg_z = sum(projected[i][2] for i in face) / len(face)
-            face_depths.append((avg_z, face))
+            face_depths.append((avg_z, face, self.face_textures[idx]))
         
         face_depths.sort(reverse=True)
         
         # Draw faces
-        for depth, face in face_depths:
+        for depth, face, texture in face_depths:
             points = []
+            face_coords = []
             for i in face:
-                points.extend([projected[i][0], projected[i][1]])
+                x, y = projected[i][0], projected[i][1]
+                points.extend([x, y])
+                face_coords.append((x, y))
             
-            # Color based on depth
-            brightness = int(128 + 127 * (depth / 20))
-            brightness = max(30, min(255, brightness))
-            color = f'#{brightness//2:02x}{brightness//3:02x}{brightness:02x}'
-            
-            self.canvas.create_polygon(points, fill=color, outline='#00ffff', width=1)
+            # Draw textured face or colored face
+            if texture == 1 or texture == 2:
+                # Use the appropriate image
+                img = self.img1 if texture == 1 else self.img2
+                
+                # Calculate bounding box and center
+                xs = [c[0] for c in face_coords]
+                ys = [c[1] for c in face_coords]
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
+                center_x = (min_x + max_x) / 2
+                center_y = (min_y + max_y) / 2
+                width = int(max_x - min_x)
+                height = int(max_y - min_y)
+                
+                if width > 5 and height > 5:
+                    # Resize image to fit the face
+                    size = max(width, height)
+                    resized = img.resize((size, size), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(resized)
+                    
+                    # Draw image centered on the hexagon
+                    self.canvas.create_image(center_x, center_y, image=photo)
+                    
+                    # Keep reference to prevent garbage collection
+                    self.canvas.image_refs.append(photo)
+                    
+                    # Draw outline on top
+                    self.canvas.create_polygon(points, fill='', outline='#00ffff', width=2)
+                else:
+                    # Too small to texture, just draw outline
+                    self.canvas.create_polygon(points, fill='gray', outline='#00ffff', width=1)
+            else:
+                # Color based on depth for non-textured faces
+                brightness = int(128 + 127 * (depth / 20))
+                brightness = max(30, min(255, brightness))
+                color = f'#{brightness//2:02x}{brightness//3:02x}{brightness:02x}'
+                
+                self.canvas.create_polygon(points, fill=color, outline='#00ffff', width=1)
     
     def on_mouse_down(self, event):
         """Record mouse position on click"""
